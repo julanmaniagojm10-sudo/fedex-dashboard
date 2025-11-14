@@ -79,7 +79,6 @@ let activeDocId = null;
 let activeStartTime = null;
 let attendanceRecords = [];
 
-// ---------- Restored statuses ----------
 const statuses = [
   "AWAY","LUNCH","BRK1","BRK2","IA-FXF-999-ACCOUNT-UPDATES","IA-FXF-ACR-REPORTS","IA-FXF-AGENCY-DISPUTE","IA-FXF-AGING",
   "IA-FXF-BACKDATE","IA-FXF-BILLING-DISPUTES","IA-FXF-CORRECTIONS","IA-FXF-CUSTOMER-SPECIFIC","IA-FXF-FBO-DISPUTES",
@@ -90,6 +89,19 @@ const statuses = [
   "IA-FXF-SALESFORCE-PREPROCESSING","IA-FXF-SPC-PRJ-PROD","IA-FXF-SRC-DISPUTE","IA-FXF-SRC-LTL-TARIFF-DISPUTE",
   "IA-FXF-WEB-REVIEW","IA-FXF-WRITEOFF-PROCESS","IA-FXF-WRITEOFF-REVIEW","MEETING","SYSTEM-DOWN","TEAM LEAD","TRAINING"
 ];
+
+// ---------- Manila Time Helper ----------
+function getManilaTime() {
+  const now = new Date();
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const manilaOffset = 8 * 60; // UTC+8
+  return new Date(utc + (manilaOffset * 60000));
+}
+
+function getManilaTimeString() {
+  const manila = getManilaTime();
+  return manila.toTimeString().split(" ")[0]; // hh:mm:ss
+}
 
 // ---------- Realtime listener ----------
 async function startRealtimeAttendance() {
@@ -134,20 +146,38 @@ function renderAttendanceTable() {
 }
 
 // ---------- Timer ----------
+// ---------- Timer ---------- 
+// Updated to use Manila time for consistent calculations
 function updateTimer() {
-  if (!activeStartTime) { document.getElementById("status-timer").innerText = "00:00:00"; return; }
+  if (!activeStartTime) { 
+    document.getElementById("status-timer").innerText = "00:00:00"; 
+    return; 
+  }
+
+  // Parse the activeStartTime into parts
   const [sh, sm, ss] = normalizeTimeParts(activeStartTime);
-  const start = new Date(); start.setHours(sh, sm, ss, 0);
-  const now = new Date(); 
+  
+  // Get the current Manila time (in Manila timezone)
+  const manila = getManilaTime();  
+  const start = new Date(manila); // Set start time to Manila time
+  start.setHours(sh, sm, ss, 0); // Adjust to the activeStartTime
+
+  // Get the current Manila time for the "now" timestamp
+  const now = getManilaTime();
+
+  // Calculate the time difference in milliseconds
   const diff = now - start;
-  const hrs = String(Math.floor(diff/3600000)).padStart(2,"0");
-  const mins = String(Math.floor((diff%3600000)/60000)).padStart(2,"0");
-  const secs = String(Math.floor((diff%60000)/1000)).padStart(2,"0");
+  
+  // Convert milliseconds to hours, minutes, seconds
+  const hrs = String(Math.floor(diff / 3600000)).padStart(2,"0");
+  const mins = String(Math.floor((diff % 3600000) / 60000)).padStart(2,"0");
+  const secs = String(Math.floor((diff % 60000) / 1000)).padStart(2,"0");
+  
+  // Update the timer
   document.getElementById("status-timer").innerText = `${hrs}:${mins}:${secs}`;
 }
 
 // ---------- Helpers ----------
-// normalize time parts for hh:mm or hh:mm:ss
 function normalizeTimeParts(timeStr) {
   if(!timeStr) return [0,0,0];
   let parts = timeStr.split(":");
@@ -157,28 +187,25 @@ function normalizeTimeParts(timeStr) {
   return nums;
 }
 
-// normalize totalHours for display
 function normalizeTotalHours(totalHours) {
   if(!totalHours) return "00:00:00";
   const parts = totalHours.split(":");
   if(parts.length === 2) return totalHours+":00";
-  if(parts.length !==3) return "00:00:00";
+  if(parts.length !== 3) return "00:00:00";
   return totalHours;
 }
 
-// calculate total hours between start and end
-function calculateTotalHours(start,end) {
+function calculateTotalHours(start, end) {
   const [sh, sm, ss] = normalizeTimeParts(start);
   const [eh, em, es] = normalizeTimeParts(end);
-  let diff = ((eh*3600 + em*60 + es) - (sh*3600 + sm*60 + ss))*1000;
-  if(diff<0) diff=0;
-  const hrs = String(Math.floor(diff/3600000)).padStart(2,'0');
-  const mins = String(Math.floor((diff%3600000)/60000)).padStart(2,'0');
-  const secs = String(Math.floor((diff%60000)/1000)).padStart(2,'0');
+  let diff = ((eh * 3600 + em * 60 + es) - (sh * 3600 + sm * 60 + ss)) * 1000;
+  if(diff < 0) diff = 0;
+  const hrs = String(Math.floor(diff / 3600000)).padStart(2,'0');
+  const mins = String(Math.floor((diff % 3600000) / 60000)).padStart(2,'0');
+  const secs = String(Math.floor((diff % 60000) / 1000)).padStart(2,'0');
   return `${hrs}:${mins}:${secs}`;
 }
 
-// sum total hours, skipping breaks/lunch
 function sumTotalHours(records) {
   if (!records || records.length === 0) return "00:00:00";
   let totalSeconds = 0;
@@ -187,79 +214,96 @@ function sumTotalHours(records) {
     if(!r.totalHours || !r.status) return;
     if(excluded.includes(r.status.toUpperCase())) return;
     const [h,m,s] = normalizeTimeParts(r.totalHours);
-    totalSeconds += h*3600 + m*60 + s;
+    totalSeconds += h * 3600 + m * 60 + s;
   });
-  const hrs = String(Math.floor(totalSeconds/3600)).padStart(2,"0");
-  const mins = String(Math.floor((totalSeconds%3600)/60)).padStart(2,"0");
-  const secs = String(totalSeconds%60).padStart(2,"0");
+  const hrs = String(Math.floor(totalSeconds / 3600)).padStart(2,"0");
+  const mins = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2,"0");
+  const secs = String(totalSeconds % 60).padStart(2,"0");
   return `${hrs}:${mins}:${secs}`;
 }
 
 // ---------- Page load ----------
-window.onload = async ()=>{
-  const initials=currentUser.name.split(" ").map(n=>n[0]).join("").toUpperCase();
-  document.getElementById("profile-initials").innerText=initials;
-  document.getElementById("welcome").innerText=`Welcome, ${currentUser.name}`;
+window.onload = async () => {
+  const initials = currentUser.name.split(" ").map(n => n[0]).join("").toUpperCase();
+  document.getElementById("profile-initials").innerText = initials;
+  document.getElementById("welcome").innerText = `Welcome, ${currentUser.name}`;
 
-  const select=document.getElementById("statusSelect");
-  statuses.forEach(s=>{ const opt=document.createElement("option"); opt.value=s; opt.text=s; select.appendChild(opt); });
+  const select = document.getElementById("statusSelect");
+  statuses.forEach(s => {
+    const opt = document.createElement("option");
+    opt.value = s;
+    opt.text = s;
+    select.appendChild(opt);
+  });
 
-  const dateInput=document.getElementById("shiftDate");
-  const now = new Date();
-  const manilaOffset = 8*60;
-  const utc = now.getTime() + (now.getTimezoneOffset()*60000);
-  const manila = new Date(utc + (manilaOffset*60000));
+  const dateInput = document.getElementById("shiftDate");
+  const manila = getManilaTime();
   dateInput.value = manila.toISOString().split("T")[0];
 
   dateInput.addEventListener("change", startRealtimeAttendance);
   startRealtimeAttendance();
-  setInterval(updateTimer,1000);
+  setInterval(updateTimer, 1000);
 };
 
 // ---------- Buttons ----------
-window.toggleDropdown=()=>{ const dd=document.getElementById("profile-dropdown"); dd.style.display=dd.style.display==="block"?"none":"block"; }
+window.toggleDropdown = () => { 
+  const dd = document.getElementById("profile-dropdown"); 
+  dd.style.display = dd.style.display === "block" ? "none" : "block"; 
+}
 
-window.checkIn=async()=>{
-  const shiftDate=document.getElementById("shiftDate").value;
-  const status=document.getElementById("statusSelect").value;
-  const comment=document.getElementById("comment").value;
-  const nowTime=new Date().toLocaleTimeString([], {hour12:false});
-  if(activeDocId){
-    const total=calculateTotalHours(activeStartTime, nowTime);
-    await updateDoc(doc(db,"attendance",activeDocId),{endTime:nowTime,totalHours:total});
+window.checkIn = async () => {
+  const shiftDate = document.getElementById("shiftDate").value;
+  const status = document.getElementById("statusSelect").value;
+  const comment = document.getElementById("comment").value;
+  const nowTime = getManilaTimeString();
+  if(activeDocId) {
+    const total = calculateTotalHours(activeStartTime, nowTime);
+    await updateDoc(doc(db,"attendance",activeDocId), { endTime: nowTime, totalHours: total });
   }
-  const newDoc=await addDoc(collection(db,"attendance"),{userId:currentUser.id,shiftDate,status,startTime:nowTime,endTime:"",totalHours:"00:00:00",comment});
-  activeDocId=newDoc.id; activeStartTime=nowTime;
-};
-
-window.checkOut=async()=>{
-  if(!activeDocId) return alert("No active status to check out.");
-  const now=new Date().toLocaleTimeString([], {hour12:false});
-  const total=calculateTotalHours(activeStartTime, now);
-  await updateDoc(doc(db,"attendance",activeDocId),{endTime:now,totalHours:total});
-  activeDocId=null; activeStartTime=null;
-};
-
-window.logout=async()=>{
-  if(activeDocId){
-    const now=new Date().toLocaleTimeString([],{hour12:false});
-    const total=calculateTotalHours(activeStartTime, now);
-    await updateDoc(doc(db,"attendance",activeDocId),{endTime:now,totalHours:total});
-  }
-  localStorage.removeItem("currentUser"); window.location.href="index.html";
-};
-
-window.exportEOD=async()=>{
-  const shiftDate=document.getElementById("shiftDate").value;
-  const q=query(collection(db,"attendance"),where("userId","==",currentUser.id),where("shiftDate","==",shiftDate));
-  const snapshot=await getDocs(q);
-  let csv="DomainId,Shiftdate,Status/Activity,Start Time,End Time,Hours,Comment\n";
-  snapshot.forEach(docSnap=>{
-    const r=docSnap.data();
-    csv+=`${currentUser.id},${r.shiftDate},${r.status},${r.startTime||''},${r.endTime||''},${normalizeTotalHours(r.totalHours)},${(r.comment||'').replace(/,/g,' ')}\n`;
+  const newDoc = await addDoc(collection(db, "attendance"), {
+    userId: currentUser.id,
+    shiftDate,
+    status,
+    startTime: nowTime,
+    endTime: "",
+    totalHours: "00:00:00",
+    comment
   });
-  const blob=new Blob([csv],{type:'text/csv'});
-  const link=document.createElement("a"); link.href=URL.createObjectURL(blob); link.download=`EOD_${shiftDate}.csv`; link.click();
+  activeDocId = newDoc.id; activeStartTime = nowTime;
+};
+
+window.checkOut = async () => {
+  if(!activeDocId) return alert("No active status to check out.");
+  const now = getManilaTimeString();
+  const total = calculateTotalHours(activeStartTime, now);
+  await updateDoc(doc(db, "attendance", activeDocId), { endTime: now, totalHours: total });
+  activeDocId = null; activeStartTime = null;
+};
+
+window.logout = async () => {
+  if(activeDocId) {
+    const now = getManilaTimeString();
+    const total = calculateTotalHours(activeStartTime, now);
+    await updateDoc(doc(db, "attendance", activeDocId), { endTime: now, totalHours: total });
+  }
+  localStorage.removeItem("currentUser"); 
+  window.location.href = "index.html";
+};
+
+window.exportEOD = async () => {
+  const shiftDate = document.getElementById("shiftDate").value;
+  const q = query(collection(db, "attendance"), where("userId", "==", currentUser.id), where("shiftDate", "==", shiftDate));
+  const snapshot = await getDocs(q);
+  let csv = "DomainId,Shiftdate,Status/Activity,Start Time,End Time,Hours,Comment\n";
+  snapshot.forEach(docSnap => {
+    const r = docSnap.data();
+    csv += `${currentUser.id},${r.shiftDate},${r.status},${r.startTime || ''},${r.endTime || ''},${normalizeTotalHours(r.totalHours)},${(r.comment || '').replace(/,/g,' ')}\n`;
+  });
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const link = document.createElement("a"); 
+  link.href = URL.createObjectURL(blob); 
+  link.download = `EOD_${shiftDate}.csv`; 
+  link.click();
 };
 </script>
 </head>
@@ -317,13 +361,13 @@ window.exportEOD=async()=>{
   </table>
 
   <div class="total-summary" style="display:flex; justify-content:space-between; align-items:center; margin:10px 0;">
-  <div style="flex: 0 0 auto;">
-    <button class="action-btn" onclick="exportEOD()">Export EOD Report</button>
+    <div style="flex: 0 0 auto;">
+      <button class="action-btn" onclick="exportEOD()">Export EOD Report</button>
+    </div>
+    <div style="flex: 0 0 auto;">
+      Total Hours for the Day: <span id="total-hours">00:00:00</span>
+    </div>
   </div>
-  <div style="flex: 0 0 auto;">
-    Total Hours for the Day: <span id="total-hours">00:00:00</span>
-  </div>
-</div>
 
   <div class="export-btn-container">
     <div class="reminder">⚠️ System is still subjected for testing. Please reach out for errors encountered. -Jules</div>
@@ -333,4 +377,3 @@ window.exportEOD=async()=>{
 </div>
 </body>
 </html>
-
